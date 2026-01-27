@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+redis
+anyio
+starlette
+fastmcp
+modelcontextprotocol
+structlog

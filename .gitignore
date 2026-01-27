@@ -1,0 +1,34 @@
+# Byte-compiled, optimized, and C extension files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environments
+# Never commit your virtual environment folder
+venv/
+.venv/
+
+# Build, distribution, and packaging artifacts
+build/
+dist/
+*.egg-info/
+
+# IDE and editor specific files
+.vscode/
+.idea/
+*.sublime-*
+
+# Testing and coverage reports
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs and local databases
+*.log
+*.db
+*.sqlite3
+
+# Operating System files
+.DS_Store
+Thumbs.db

@@ -1,0 +1,3 @@
+"""
+Define utility methods
+"""
