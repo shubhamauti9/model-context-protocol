@@ -1,177 +1,429 @@
-# MCP Server
+<div align="center">
 
-An MCP Server (Model Context Protocol Server) is a standardized service that connects Large Language Models (LLMs) and AI agents to external data, tools, and applications (like Slack, GitHub, databases, or cloud services) using a common protocol, allowing the AI to perform real-world actions, retrieve live info, and integrate complex workflows beyond its training data. It acts as a translator, enabling AI to securely use APIs and internal systems, simplifying development and enabling more capable, agentic AI.
+# Model Context Protocol Template
 
-## Architecture
+**A production-ready template for building Model Context Protocol (MCP) pipelines that connect LLMs and AI agents to external data, tools, and services.**
 
-The **MCP** server employs a robust, layered architecture utilizing **FastMCP** on top of **Starlette** (ASGI), backed by **Redis** for stateful session management. It bridges stateless HTTP/SSE transports with stateful MCP sessions.
+[![Python 3.13](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://python.org)
+[![FastMCP](https://img.shields.io/badge/FastMCP-Protocol-blueviolet)](https://github.com/jlowin/fastmcp)
+[![Redis](https://img.shields.io/badge/Redis-State%20Store-DC382D?logo=redis&logoColor=white)](https://redis.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](Dockerfile)
 
-### Key Components
+</div>
 
-1.  **Core Server (FastMCP & Starlette)**
-    *   **FastMCP**: Provides the high-level MCP protocol implementation.
-    *   **Starlette**: Serves as the underlying ASGI framework, handling routing, middleware, and incoming HTTP requests.
-    *   **Concurrency**: Uses `anyio` task groups to manage bidirectional streams and background tasks efficiently.
+---
 
-2.  **Custom Middleware**
-    This component is the heart of the server, managing the lifecycle of every request:
-    *   **Streamable HTTP Transport**: Implements the `StreamableHTTPServerTransport` to handle MCP messages over HTTP with full session awareness.
-    *   **SSE Handlers**: Manages Server-Sent Events for real-time server-to-client communication. It utilizes `anyio.create_memory_object_stream` to create non-blocking, in-memory channels (`read_stream`, `write_stream`) for piping messages between the HTTP layer and the MCP core.
-    *   **Session Context**: Injects `mcp_session_id` into request headers, allowing the stateless FastMCP server to operate as if it were stateful.
+## Table of Contents
 
-3.  **State Management (Redis)**
-    All state is externalized to Redis, ensuring the application server remains stateless and horizontally scalable.
-    *   **Session Logic**:
-        *   **Structure**: Sessions are stored as JSON objects (`RedisJSON`).
-        *   **Tracking**: Maintains `last_active` timestamps for accurate session expiry and cleanup.
-        *   **Lifecycle**: Handles creation, validation, extension, and destruction of user sessions.
-    *   **Auth Storage**:
-        *   **Auth Codes**: Short-lived codes stored with a TTL.
-        *   **Token Metadata**: `jti` (JWT ID) stored for revocation checks.
+- [Why MCP?](#-why-mcp)
+- [Architecture Overview](#-architecture-overview)
+  - [High-Level Pipeline Flow](#high-level-pipeline-flow)
+  - [Detailed Component Architecture](#detailed-component-architecture)
+  - [Authentication & Session Sequence](#authentication--session-sequence)
+- [Key Components](#-key-components)
+- [Tech Stack](#-tech-stack)
+- [Project Structure](#-project-structure)
+- [Getting Started](#-getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Local Setup](#local-setup)
+  - [Docker Deployment](#docker-deployment)
+- [Client Integration](#-client-integration)
+- [Available Tools](#-available-tools)
+- [Configuration Reference](#-configuration-reference)
+- [Session & Auth Deep Dive](#-session--auth-deep-dive)
+- [Contributing](#-contributing)
+- [License](#-license)
 
-4.  **Security & Authentication**
-    *   **OAuth 2.1 Implementation**: A custom, lightweight OAuth provider.
-        *   **PKCE**: Enforces Proof Key for Code Exchange (S256) for secure public client authentication.
-        *   **JWT Tokens**: Issues stateless Bearer tokens containing the `session_id`, signed with `HS256` (using `TOKEN_PARAMETER`).
-    *   **Encryption**: Uses `cryptography` library (AES-CBC) to secure sensitive configuration data like Redis passwords.
+---
 
-5.  **Tools Service**
-    *   Modular tool definitions that interact with external APIs.
-    *   Uses `Helpers` and `SessionManager` to validate context before execution.
+## Why MCP?
 
-### Architecture Diagram
+Large Language Models are powerful but isolated — they can't natively access live databases, trigger workflows, or call APIs. The **Model Context Protocol (MCP)** solves this by providing a **standardized bridge** between AI and the real world.
+
+| Problem | MCP Solution |
+|---|---|
+| LLMs can't access live data | Connects to databases, APIs, and services in real-time |
+| Every integration requires custom code | One universal protocol for all tool integrations |
+| No session awareness across requests | Redis-backed stateful sessions over stateless HTTP/SSE |
+| Security is an afterthought | Built-in OAuth 2.1 + PKCE, encrypted credentials, JWT tokens |
+| Hard to scale AI tool servers | Stateless server design, horizontal scaling via externalized state |
+
+This template gives you a **batteries-included starting point** — fork it, add your tools, and deploy.
+
+---
+
+## Architecture Overview
 
 ![MCP Server Architecture](docs/architecture_diagram.png)
 
-<details>
-<summary>View as Text Diagram (Mermaid)</summary>
+### High-Level Pipeline Flow
+
+The MCP server acts as a **middleware pipeline** that translates between AI clients and external services. Below is the end-to-end data flow:
 
 ```mermaid
 flowchart LR
-    subgraph CLIENT["1. Client Layer"]
-        LLM[LLM / AI Assistant]
-        Browser[User Browser]
+    subgraph CLIENTS["👤 Client Layer"]
+        LLM["🤖 LLM / AI Agent"]
+        Browser["🌐 User Browser"]
     end
 
-    subgraph MCP["2. MCP Server"]
+    subgraph MCP_SERVER["⚙️ MCP Server Pipeline"]
         direction TB
-        Entry["/mcp  /sse  /http"]
-        Login[Login Tool]
-        Callback["/redirect Callback"]
-        Tools[Other Tools]
+        Transport["Transport Layer<br/>/mcp · /sse · /http"]
+        Middleware["Custom Middleware<br/>Session Injection · SSE Streams"]
+        Core["FastMCP Core<br/>Protocol Handler · Tool Registry"]
+        Tools["Tools Engine<br/>Modular Tool Execution"]
     end
 
-    subgraph STATE["3. Redis State"]
-        Session[(Session Store)]
+    subgraph STATE["💾 State Layer"]
+        Redis[("Redis<br/>Sessions · Auth · Tokens")]
     end
 
-    subgraph EXTERNAL["4. External Services"]
-        IDP[Identity Provider]
-        API[Trading API]
+    subgraph EXTERNAL["🌍 External Services"]
+        IDP["Identity Provider"]
+        API["Upstream APIs"]
     end
 
-    %% Main Flow
-    LLM -->|Connect| Entry
-    Entry -->|Create Session| Session
-    LLM -->|Call login| Login
-    Login -->|Return Auth URL| LLM
-    LLM -.->|Show URL to User| Browser
-    Browser -->|Authenticate| IDP
-    IDP -->|Redirect with token| Callback
-    Callback -->|Store Credentials| Session
-    LLM -->|Call holdings, orders...| Tools
-    Tools -->|Read Session| Session
-    Tools -->|Authenticated Request| API
-    API -->|Response| Tools
-    Tools -->|Masked Data| LLM
+    LLM -->|"MCP Request"| Transport
+    Transport --> Middleware
+    Middleware -->|"Read / Write"| Redis
+    Middleware --> Core
+    Core --> Tools
+    Tools -->|"API Call"| API
+    API -->|"Response"| Tools
+    Tools -->|"Masked Data"| LLM
+    Browser -->|"OAuth Login"| IDP
+    IDP -->|"Callback + Token"| Middleware
+    Middleware -->|"Store Credentials"| Redis
+
+    style CLIENTS fill:#0d1b2a,stroke:#00b4d8,color:#e0e0e0
+    style MCP_SERVER fill:#1a1a2e,stroke:#7b2ff7,color:#e0e0e0
+    style STATE fill:#0d1b2a,stroke:#00c853,color:#e0e0e0
+    style EXTERNAL fill:#0d1b2a,stroke:#ff6d00,color:#e0e0e0
 ```
 
-</details>
+> [!TIP]
+> The server is **fully stateless** — all session data lives in Redis, making horizontal scaling trivial.
 
-### Detailed Session & Authentication Workflow
+---
 
-The MCP server implements a specific state management flow to handle secure authentication and tool execution:
+### Detailed Component Architecture
 
-1.  **Session Management (Redis)**:
-    *   The server uses Redis to manage user sessions with a default **1-hour activity window**.
-    *   Redis acts as the central state store, allowing the stateless HTTP/SSE/MCP protocols to maintain context across requests.
+This diagram zooms into the internal layering of the MCP server, showing how each module connects:
 
-2.  **Login Initiation (Tool-based)**:
-    *   When a user needs to access protected resources (e.g., trading APIs), they typically start by calling the **`login` tool**.
-    *   This tool generates a specific **Authentication URL** containing the necessary state parameters.
-    *   The user is directed to visit this URL to authenticate with the external Broker/Identity Provider.
+```mermaid
+flowchart TB
+    subgraph ENTRY["🚪 Entry Points"]
+        MCP_EP["/mcp<br/>Standard MCP Protocol"]
+        SSE_EP["/sse<br/>Server-Sent Events"]
+        HTTP_EP["/http<br/>Direct HTTP"]
+    end
 
-3.  **Authentication & Callback**:
-    *   Upon successful authentication by the user on the external page, the Identity Provider triggers a **Callback**.
-    *   This callback hits the MCP server's exposed **Redirect/Callback Endpoint**.
-    *   The **Middleware** intercepts this callback, capturing the authentication tokens and parameters.
+    subgraph MIDDLEWARE_LAYER["🛡️ Custom Middleware"]
+        direction TB
+        SessionInject["Session Context Injector<br/>Injects mcp_session_id into headers"]
+        StreamTransport["StreamableHTTPServerTransport<br/>HTTP ↔ MCP message bridge"]
+        SSEHandler["SSE Handler<br/>anyio memory streams for<br/>non-blocking read/write channels"]
+    end
 
-4.  **Session Hydration**:
-    *   The captured credentials are **stored securely in Redis**, linked to the active `mcp_session_id`.
-    *   This "hydrates" the session, elevating it from an anonymous state to an authenticated state.
+    subgraph CORE_LAYER["⚙️ FastMCP Core"]
+        direction TB
+        ProtocolHandler["Protocol Handler<br/>MCP message parsing & routing"]
+        ToolRegistry["Tool Registry<br/>Dynamic tool discovery & dispatch"]
+        TaskGroups["anyio Task Groups<br/>Bidirectional stream management"]
+    end
 
-5.  **Authorized Resource Access**:
-    *   Subsequent calls to tools (like `holdings`, `orders`) verify the session in Redis.
-    *   Since the session now contains the valid credentials (from step 4), the tools can successfully authenticate against the upstream Trading APIs.
-    *   This seamless flow is supported across all transport layers: **`/mcp`** (Standard Protocol), **`/sse`** (Server-Sent Events), and **`/http`** (Direct HTTP).
+    subgraph AUTH_LAYER["🔐 Security Layer"]
+        direction TB
+        OAuth["OAuth 2.1 Provider<br/>Authorization & Token endpoints"]
+        PKCE["PKCE Enforcer<br/>S256 code challenge verification"]
+        JWT["JWT Manager<br/>HS256 signed Bearer tokens"]
+        Encryption["AES-CBC Encryption<br/>Sensitive config protection"]
+    end
 
-### Authentication Flow for /http & /sse protocol (Deep Dive)
+    subgraph TOOLS_LAYER["🧰 Tools Engine"]
+        direction TB
+        ServiceTool["Service Tool<br/>Generic modular tool"]
+        Helpers["Helpers<br/>Context validation & utilities"]
+    end
 
-1.  **Authorization Request (`/authorize`)**:
-    *   Client initiates flow with `code_challenge` and `redirect_uri`.
-    *   Server generates a temporary `auth_code` stored in Redis (TTL: 10 mins).
-    *   **No Credentials**: A session ID is created but remains unauthenticated regarding the broker.
+    subgraph STATE_LAYER["💾 Redis State"]
+        direction TB
+        SessionStore[("Session Store<br/>JSON objects via RedisJSON<br/>1-hour TTL")]
+        AuthCodes[("Auth Codes<br/>Short-lived, 10-min TTL")]
+        TokenMeta[("Token Metadata<br/>JTI for revocation checks")]
+    end
 
-2.  **Callback & Exchange (`/token`)**:
-    *   Client presents `auth_code` and `code_verifier`.
-    *   Server validates PKCE match (`SHA256(verifier) == challenge`).
-    *   **Issue Token**: Returns a Signed JWT containing `session_id`.
+    MCP_EP & SSE_EP & HTTP_EP --> SessionInject
+    SessionInject --> StreamTransport
+    StreamTransport --> SSEHandler
+    SSEHandler --> ProtocolHandler
+    ProtocolHandler --> ToolRegistry
+    ToolRegistry --> TaskGroups
+    TaskGroups --> ServiceTool
+    ServiceTool --> Helpers
 
-3.  **Authenticated Interactions**:
-    *   **HTTP**: Client sends `Authorization: Bearer <jwt>`. Middleware decodes JWT, extracts `session_id`, verifies it against Redis, and hydrates the request context.
-    *   **SSE**: Client connects to `/sse?session_id=...`. The session is validated, and an async message pipeline is established.
+    SessionInject -.->|"Read/Write"| SessionStore
+    OAuth -.->|"Store"| AuthCodes
+    JWT -.->|"Store JTI"| TokenMeta
+    StreamTransport -.-> OAuth
+    OAuth --> PKCE
+    PKCE --> JWT
 
-## Quick Start
+    style ENTRY fill:#112240,stroke:#64ffda,color:#ccd6f6
+    style MIDDLEWARE_LAYER fill:#112240,stroke:#7b2ff7,color:#ccd6f6
+    style CORE_LAYER fill:#112240,stroke:#00b4d8,color:#ccd6f6
+    style AUTH_LAYER fill:#112240,stroke:#f44336,color:#ccd6f6
+    style TOOLS_LAYER fill:#112240,stroke:#ff9800,color:#ccd6f6
+    style STATE_LAYER fill:#112240,stroke:#00c853,color:#ccd6f6
+```
+
+---
+
+### Authentication & Session Sequence
+
+The following sequence diagram illustrates the complete lifecycle — from initial connection to authenticated tool execution:
+
+```mermaid
+sequenceDiagram
+    participant LLM as 🤖 LLM / AI Agent
+    participant MCP as ⚙️ MCP Server
+    participant Redis as 💾 Redis
+    participant Browser as 🌐 User Browser
+    participant IDP as 🔑 Identity Provider
+    participant API as 🌍 Upstream API
+
+    Note over LLM,API: Phase 1 — Session Establishment
+    LLM->>MCP: Connect via /mcp, /sse, or /http
+    MCP->>Redis: Create session (JSON, 1hr TTL)
+    Redis-->>MCP: session_id
+    MCP-->>LLM: Connection established
+
+    Note over LLM,API: Phase 2 — Authentication
+    LLM->>MCP: Call "login" tool
+    MCP-->>LLM: Return Auth URL
+    LLM-->>Browser: Display Auth URL to user
+    Browser->>IDP: User authenticates
+    IDP->>MCP: Redirect callback with token
+    MCP->>Redis: Store credentials → session_id
+    Redis-->>MCP: OK
+    MCP-->>Browser: "Login successful" page
+
+    Note over LLM,API: Phase 3 — Authenticated Tool Execution
+    LLM->>MCP: Call tool (e.g., "service")
+    MCP->>Redis: Validate session + load credentials
+    Redis-->>MCP: Session data + credentials
+    MCP->>API: Authenticated API request
+    API-->>MCP: Response data
+    MCP-->>LLM: Masked / formatted result
+```
+
+---
+
+## Key Components
+
+| Component | Description |
+|---|---|
+| **FastMCP Core** | High-level MCP protocol implementation — tool registration, message routing, context management |
+| **Starlette (ASGI)** | Underlying async web framework — handles HTTP routing, middleware stack, and request lifecycle |
+| **Custom Middleware** | Session-aware request handler — injects `mcp_session_id`, manages SSE streams via `anyio` memory channels, bridges HTTP ↔ MCP |
+| **OAuth 2.1 + PKCE** | Lightweight built-in authorization server — issues JWT Bearer tokens, enforces S256 PKCE for public clients |
+| **Redis State Store** | Externalized session & auth storage — `RedisJSON` objects with TTL, auth codes, and token metadata |
+| **AES-CBC Encryption** | Protects sensitive configuration values (e.g., Redis passwords) using the `cryptography` library |
+| **Tools Engine** | Modular tool definitions — validates context via `Helpers` and `SessionManager` before executing business logic |
+| **Structured Logging** | Uses `structlog` for JSON-formatted structured logs with configurable log levels |
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|---|---|---|
+| **Runtime** | Python 3.13 | Core language |
+| **MCP Protocol** | FastMCP | Protocol implementation & tool registry |
+| **Web Framework** | Starlette (ASGI) | HTTP/SSE routing & middleware |
+| **ASGI Server** | Uvicorn | High-performance async server |
+| **State Store** | Redis (RedisJSON) | Sessions, auth codes, token metadata |
+| **Authentication** | Custom OAuth 2.1 | PKCE, JWT, Bearer tokens |
+| **Encryption** | `cryptography` (AES-CBC) | Config & credential protection |
+| **Logging** | `structlog` | Structured JSON logging |
+| **Containerization** | Docker (Alpine) | Lightweight deployment |
+| **Async** | `anyio` | Task groups & memory streams |
+
+---
+
+## 📁 Project Structure
+
+```
+model-context-protocol/
+├── src/
+│   ├── main.py                 # Application entry point & tool registration
+│   ├── config.py               # Environment loading & configuration constants
+│   ├── auth/
+│   │   ├── oauth.py            # OAuth 2.1 authorization server (PKCE)
+│   │   └── token.py            # JWT token issuance & validation
+│   ├── conn/
+│   │   └── redis_config.py     # Redis client initialization
+│   ├── encryptdecrypt/
+│   │   └── encrypt.py          # AES-CBC encryption / decryption utilities
+│   ├── exception/
+│   │   └── handler.py          # Global exception handling
+│   ├── log/
+│   │   └── logger.py           # Structured logging configuration
+│   ├── middleware/
+│   │   └── middleware.py        # Custom middleware (session injection, SSE, transport)
+│   ├── server/
+│   │   └── server.py           # Starlette app factory & route definitions
+│   ├── session/
+│   │   ├── manager.py          # Session lifecycle management (Redis)
+│   │   └── session.py          # Session model & validation
+│   ├── tools/
+│   │   └── service.py          # Modular tool definitions
+│   └── utils/
+│       └── helpers.py          # Context validation & utility functions
+├── docs/
+│   └── architecture_diagram.png
+├── test/                       # Unit & integration tests
+├── .env                        # Environment variables (not committed)
+├── Dockerfile                  # Container image definition
+├── pyproject.toml              # Pytest & coverage configuration
+├── requirements.txt            # Python dependencies
+└── LICENSE                     # MIT License
+```
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+| Requirement | Version |
+|---|---|
+| Python | ≥ 3.13 |
+| Redis | ≥ 7.0 (with RedisJSON module) |
+| Docker | ≥ 20.10 *(optional, for containerized deployment)* |
 
 ### Local Setup
 
-1.  **Clone the repository**:
-    ```bash
-    git clone <repository-url>
-    cd model-context-protocol
-    ```
+**1. Clone the repository**
 
-2.  **Set up Environment Variables**:
-    Create a `.env` file based on your requirements.
-    ```bash
-    # Required for Encryption (Empty strings allow default behavior but providing keys is recommended)
-    ENCRYPTION_KEY="your-32-byte-key"
-    ENCRYPTION_IV="your-16-byte-iv"
-    
-    # Redis Configuration
-    REDIS_HOST="localhost"
-    REDIS_PORT=6379
-    
-    # App Config
-    MASK_MCP_HOST="0.0.0.0"
-    MASK_MCP_PORT=6901
-    ```
+```bash
+git clone https://github.com/shubhamauti9/model-context-protocol.git
+cd model-context-protocol
+```
 
-3.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
+**2. Create a virtual environment**
 
-4.  **Run the Server**:
-    ```bash
-    python src/main.py
-    ```
+```bash
+python -m venv .venv
+source .venv/bin/activate        # macOS / Linux
+.venv\Scripts\activate           # Windows
+```
 
-## Client Integration
+**3. Install dependencies**
 
-### Claude Desktop Configuration
+```bash
+pip install -r requirements.txt
+```
 
-Add the following to your Claude Desktop configuration (`~/.config/Claude/claude_desktop_config.json`):
+**4. Configure environment variables**
+
+Create a `.env` file in the project root:
+
+```env
+# ── App ──────────────────────────────────
+MASK_MCP_HOST=0.0.0.0
+MASK_MCP_PORT=6901
+APP_VERSION=1.0.0
+
+# ── Redis ────────────────────────────────
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_P=                         # Redis password (leave blank for local)
+REDIS_DB=0
+
+# ── Encryption ───────────────────────────
+ENCRYPTION_KEY=your-32-byte-key
+ENCRYPTION_IV=your-16-byte-iv
+
+# ── Logging ──────────────────────────────
+LOG_FILE=logs/mcp.log
+```
+
+**5. Start Redis**
+
+```bash
+# Using Docker
+docker run -d --name redis -p 6379:6379 redis:7-alpine
+
+# Or install natively 
+visit https://redis.io/docs/getting-started/
+```
+
+**6. Run the server**
+
+```bash
+python src/main.py
+```
+
+The server will start at `http://0.0.0.0:6901`. You can verify it's running:
+
+```bash
+curl http://localhost:6901/mcp
+```
+
+---
+
+### Docker Deployment
+
+**Build the image**
+
+```bash
+docker build -t mcp:1.0.0 .
+```
+
+**Run the container**
+
+```bash
+docker run -d \
+  --name mcp-server \
+  -p 6901:6901 \
+  --env-file .env \
+  mcp:1.0.0
+```
+
+**Docker Compose** *(recommended for production)*
+
+```yaml
+version: "3.9"
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+  mcp:
+    build: .
+    ports:
+      - "6901:6901"
+    depends_on:
+      - redis
+    env_file:
+      - .env
+```
+
+---
+
+## 🔗 Client Integration
+
+### Claude Desktop
+
+Add the following to your Claude Desktop configuration file:
+
+| OS | Config Path |
+|---|---|
+| macOS | `~/.config/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
 
 ```json
 {
@@ -184,20 +436,103 @@ Add the following to your Claude Desktop configuration (`~/.config/Claude/claude
 }
 ```
 
+### Direct HTTP
+
+```bash
+# Connect over HTTP
+curl -X POST http://localhost:6901/http \
+  -H "Content-Type: application/json" \
+  -d '{"method": "tools/call", "params": {"name": "service"}}'
+```
+
+### SSE (Server-Sent Events)
+
+```bash
+# Open an SSE stream
+curl -N http://localhost:6901/sse?session_id=<your-session-id>
+```
+
+---
+
 ## Available Tools
 
-- `service` - Generic service tool (Could be configured as required).
+| Tool | Description |
+|---|---|
+| `service` | Generic, modular service tool — designed to be extended for your specific use case. Validates session context before execution. |
 
-## Docker
+> [!NOTE]
+> To add custom tools, create a new module in `src/tools/`, define your tool function, and register it in `src/main.py` using the `@mcp.tool()` decorator. See `src/tools/service.py` for a reference implementation.
 
-### Building the Image
+---
 
-```bash
-docker build -t mcp:1.0.0 .
+## ⚙️ Configuration Reference
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `MASK_MCP_HOST` | Yes | — | Server bind address |
+| `MASK_MCP_PORT` | No | `6901` | Server port |
+| `APP_VERSION` | No | — | Application version string |
+| `REDIS_HOST` | Yes | `127.0.0.1` | Redis server hostname |
+| `REDIS_PORT` | No | `6379` | Redis server port |
+| `REDIS_P` | No | `""` | Redis password |
+| `REDIS_DB` | No | `0` | Redis database index |
+| `ENCRYPTION_KEY` | Yes | — | 32-byte AES encryption key |
+| `ENCRYPTION_IV` | Yes | — | 16-byte AES initialization vector |
+| `LOG_FILE` | No | — | Log file output path |
+
+---
+
+## 🔐 Session & Auth Deep Dive
+
+### Session Lifecycle
+
+```
+┌─────────────┐     ┌──────────────┐      ┌──────────────┐     ┌─────────────┐
+│   CONNECT   │────▶│   ANONYMOUS  │────▶│ AUTHENTICATED│────▶│   EXPIRED   │
+│             │     │  Session in  │      │ Credentials  │     │  TTL reached│
+│  /mcp /sse  │     │  Redis (1hr) │      │ stored in    │     │  or manual  │
+│  /http      │     │              │      │  Redis       │     │  logout     │
+└─────────────┘     └──────────────┘      └──────────────┘     └─────────────┘
 ```
 
-### Running the Container
+### OAuth 2.1 + PKCE Flow (for `/http` & `/sse`)
 
-```bash
-docker run -d --name mcp -p 6901:6901 mcp:1.0.0
-```
+1. **Authorization** — Client sends `code_challenge` + `redirect_uri` to `/authorize`. Server creates a temporary `auth_code` in Redis (10-min TTL).
+2. **Token Exchange** — Client presents `auth_code` + `code_verifier` to `/token`. Server validates `SHA256(verifier) == challenge`, then issues a signed JWT containing the `session_id`.
+3. **Authenticated Requests**:
+   - **HTTP**: `Authorization: Bearer <jwt>` → Middleware decodes JWT, extracts `session_id`, validates against Redis.
+   - **SSE**: `/sse?session_id=...` → Session validated, async message pipeline established.
+
+### Transport Protocols
+
+| Protocol | Endpoint | Use Case | Session |
+|---|---|---|---|
+| **MCP** | `/mcp` | Standard MCP clients (Claude, etc.) | Auto-managed |
+| **SSE** | `/sse` | Real-time streaming responses | Query param |
+| **HTTP** | `/http` | REST-style direct calls | Bearer JWT |
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. **Fork** the repository
+2. **Create** a feature branch: `git checkout -b feature/my-tool`
+3. **Commit** your changes: `git commit -m "feat: add my-tool integration"`
+4. **Push** to the branch: `git push origin feature/my-tool`
+5. **Open** a Pull Request
+
+> [!IMPORTANT]
+> Please ensure your code passes the existing test suite before submitting a PR:
+> ```bash
+> pytest --cov=src --cov-report=term-missing
+> ```
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
+
+---
