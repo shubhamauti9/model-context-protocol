@@ -9,10 +9,11 @@ from config import (
 from conn import redis_config
 from log.logger import logger
 from middleware.middleware import CustomMiddleware
+from src.tools.tool1 import Tool1Service
+from src.utils.constants import TOOL_1_DESCRIPTION
 from utils.helpers import Helpers
 from session.manager import SessionManager
 from server.server import Server
-from tools.service import Service
 
 logger.info("Initializing FastMCP for MCP server")
 mcp = FastMCP(name="mcp")
@@ -53,21 +54,22 @@ if __name__ == "__main__":
     Initializes the tools which are used in the MCP server
     """
     
-    logger.info("Initializing Service for MCP server")
-    service = Service(
+    logger.info("Initializing Tool 1 Service for MCP server")
+    tool_1_service = Tool1Service(
         helpers if helpers is not None else Helpers(),
         session_manager if session_manager is not None else SessionManager()
     )
     
     @mcp.tool(
-        name="service",
+        name="Tool_1",
+        description=TOOL_1_DESCRIPTION,
         annotations={
             "ctx": {"type": "object", "description": "The context object provided by fastmcp to manage session and activity."},
             "returns": {"type": "dict"}
         }
     )
-    async def service(ctx: Context):
-        return service.service(ctx)
+    async def tool_1(ctx: Context):
+        return tool_1_service.tool_1(ctx)
 
     try:    
         logger.info(f"Starting MCP server on http://{HOST}:{PORT}")

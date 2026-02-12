@@ -8,14 +8,16 @@ from log.logger import (
     session_logger
 )
 from server.server import Server
+from src.config import API_KEY
 from utils.helpers import Helpers
 from session.manager import SessionManager
 from utils.request import CustomRequest
+from toon_format import encode
 
 """
 A service class to handle tool.
 """
-class Service:
+class Tool1Service:
     """
     Implements the example of tool
     """
@@ -25,12 +27,12 @@ class Service:
     _instance = None
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(Service, cls).__new__(cls)
-            logger.info("Service instance created")
+            cls._instance = super(Tool1Service, cls).__new__(cls)
+            logger.info("Tool 1 Service instance created")
         return cls._instance
     
     """
-    Initializes the FundsService with necessary dependencies.
+    Initializes the Tool1 Service with necessary dependencies.
 
     Args:
         helpers_util (helpers.helpers): An instance of the helpers utility class.
@@ -39,13 +41,14 @@ class Service:
     def __init__(
         self, helpers: Helpers, session_manager: SessionManager
     ):
+        self.api_key = API_KEY
         self.helpers = helpers
         self.session_manager = session_manager
 
     """
-    example tool.
+    example tool 1.
     """
-    def service(
+    def tool_1(
         self, ctx: Context
     ) -> dict:
         request = ctx.request_context.request
@@ -61,6 +64,27 @@ class Service:
                 "Session is Expired. Please login again. for session id",
                 "tool"
             )
-            return {"status": "error", "message": "Session is Expired. Please login again."}
+            return encode({"status": "error", "message": "Session is Expired. Please login again."})
 
-        #further tool execution ex. api call or calculation or specific process
+        #make the request to the API
+        custom_request = CustomRequest(
+            api_key=self.api_key,
+            access_token=accessToken,
+            state=mcp_session_id,
+            debug=False
+        )   
+        response = custom_request._request(
+            route="api.tool1",
+            method="GET",
+            parameters={}
+        )
+        if response.status_code != 200:
+            session_logger(
+                mcp_session_id,
+                "error",
+                "Failed to call tool 1 API",
+                "tool"
+            )
+            return encode({"status": "error", "message": "Failed to call tool 1 API"})
+        #return the response in toon format
+        return encode(response.json())

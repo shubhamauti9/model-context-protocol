@@ -48,10 +48,10 @@ APP_VERSION = os.getenv("APP_VERSION")
 VERSION_ID = os.getenv("VERSION_ID")
 
 #app-port
-HOST = os.getenv("MASK_MCP_HOST")
+HOST = os.getenv("MCP_HOST")
 
 #app-host
-PORT = os.getenv("MASK_MCP_PORT") or 6901
+PORT = os.getenv("MCP_PORT") or 6901
 
 #redis-host
 REDIS_HOST = os.getenv("REDIS_HOST") or "http://127.0.0.1"
@@ -71,13 +71,11 @@ LOG_PATH = os.getenv("LOG_FILE")
 #encoding-type
 ENCODING = os.getenv("ENCODING")
 
-#issuer
-#audience
-#algorithm
-#resource
-#bearer-realm
-#as-base-url
+#api-base-url
+BASE_URL = os.getenv("API_BASE_URL")
+
 #api-key
+API_KEY = os.getenv("API_KEY")
 
 #session-validity
 SESSION_VALIDITY = datetime.timedelta(hours=1)
